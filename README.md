@@ -19,6 +19,8 @@ It performs a quick check using randomly generated sequences to ensure the param
 
 Note that no trimming of the barcodes is performed.
 
+Performance is not especially rapid: roughly 500-1,000 reads are demultiplexed per second using standard parameters (around 3,000,000 per hour)
+
 ## Usage
 
 ```
