@@ -306,7 +306,7 @@ def main():
 				continue
 
 			if i % 1000 == 0 and i > 0:
-				print(i)
+				print(f"Number of reads: {i}", end="\r")
 
 			# Identify the barcodes
 			for rc in [True, False]:
