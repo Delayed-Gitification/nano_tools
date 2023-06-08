@@ -8,8 +8,8 @@ This tool demultiplexes nanopore libraries based on barcodes in the 5' or 3' end
 
 This enables one to, for example, generate 96 uniquely barcoded PCR products using 8 forward and 12 reverse primers.
 
-The algorithm is accounts for Nanopore's relatively high error rate and lack of positional precision:
-1. Takes the first and last N bases (default 100) of each read
+The algorithm accounts for Nanopore's relatively high error rate and lack of positional precision. For each read it:
+1. Takes the first and last N bases (default 100)
 2. Searches for (partial) matches to each barcode using the rapidfuzz library - this allows for insertions/deletions and mismatches. 
 3. (Optionally) does the same for the reverse complement
 4. Filters for matches that confidently match only a single unique barcode or barcode pair
