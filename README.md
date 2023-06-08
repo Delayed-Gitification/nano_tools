@@ -1,6 +1,6 @@
 # nano_tools
 
-nano_tools has several python scripts I have generated that I find useful for analysing nanopore data.
+nano_tools is a collection of several python scripts I have generated that I find useful for analysing nanopore data.
 
 # demultiplex_nanopore_barcodes.py
 
@@ -8,8 +8,8 @@ This tool demultiplexes nanopore libraries based on barcodes in the 5' or 3' end
 
 This enables one to, for example, generate 96 uniquely barcoded PCR products using 8 forward and 12 reverse primers.
 
-The algorithm is accounts for Nanopore's relatively high error rate and lack of positional precision:
-1. Takes the first and last N bases (default 100) of each read
+The algorithm accounts for Nanopore's relatively high error rate and lack of positional precision. For each read it:
+1. Takes the first and last N bases (default 100)
 2. Searches for (partial) matches to each barcode using the rapidfuzz library - this allows for insertions/deletions and mismatches. 
 3. (Optionally) does the same for the reverse complement
 4. Filters for matches that confidently match only a single unique barcode or barcode pair
@@ -18,6 +18,8 @@ The algorithm is accounts for Nanopore's relatively high error rate and lack of 
 It performs a quick check using randomly generated sequences to ensure the parameters used do not lead to significant false discovery rates.
 
 Note that no trimming of the barcodes is performed.
+
+Performance is not especially rapid: roughly 500-1,000 reads are demultiplexed per second using standard parameters (around 3,000,000 per hour)
 
 ## Usage
 
