@@ -21,6 +21,7 @@ Note that no trimming of the barcodes is performed.
 
 ## Usage
 
+```
 --fastq/-f: This is the fastq file that you wish to demultiplex
 --primers/-p: This is the csv of primers/barcodes used to generate the library (see below for formatting details)
 --output/-o: This is the prefix (including directory) that files are written to
@@ -29,6 +30,7 @@ Note that no trimming of the barcodes is performed.
 --max_ambiguity (default 82): If a second match is gains this score or more, the match is rejected because it is considered ambiguous
 --length/-l (default 100): This is the length at the start and end of each read that is searched for barcodes
 --ignore_rc (default False): This option ignores the reverse complement of the read (i.e. only looks at the forward read)
+```
 
 ## Formatting the primers/barcodes csv
 
