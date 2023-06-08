@@ -42,7 +42,8 @@ The csv must have 3 columns:
 3. The third column must either be "F" or "R" depending on whether it was a forward or reverse barcode
 
 Here is an example:
-```R1,GACATCAATTCGAACAATCC,R
+```
+R1,GACATCAATTCGAACAATCC,R
 R2,TAACTTACCTGTATAGCACA,R
 R3,TTATATACATCTTCCTGGCT,R
 F1,AGAATATCTTAGACACTTGC,F
