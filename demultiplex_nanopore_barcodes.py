@@ -1,11 +1,11 @@
 import argparse
-#import dnaio
+import dnaio
 import random
-
 from rapidfuzz import fuzz
 from os.path import exists
 import gzip
 import numpy as np
+import time
 
 
 def rev_c(seq):
@@ -165,10 +165,10 @@ def get_args():
 	parser.add_argument("-f", "--fastq", required=True)
 	parser.add_argument("-p", "--primers", required=True, help="This should be a headerless, three column csv with "
 	                                                           "columns 1=name,2=barcode,3=f or r")
-	parser.add_argument("-s", "--min_score", type=float, default=92, help="When matching barcodes")
-	parser.add_argument("--max_ambiguity", type=float, default=82, help="If another barcode has this score or higher, "
+	parser.add_argument("-s", "--min_score", type=float, default=90, help="When matching barcodes")
+	parser.add_argument("--max_ambiguity", type=float, default=84, help="If another barcode has this score or higher, "
 	                                                                    "then ignore this read because it's ambiguous")
-	parser.add_argument("-l", "--length", type=int, default=80, help="length to look at start and end of reads "
+	parser.add_argument("-l", "--length", type=int, default=100, help="length to look at start and end of reads "
 	                                                                 "for barcode")
 	parser.add_argument("--ignore_rc", action="store_true", default=False, help="by default it looks at the read and "
 	                                                                            "its reverse complement. Use this "
@@ -234,8 +234,11 @@ def main():
 	args = get_args()
 
 	forward_primers, reverse_primers = read_primers(args.primers)
+	print("Forward primers:")
 	print(forward_primers)
+	print("\nReverse primers:")
 	print(reverse_primers)
+	print("")
 
 	if len(forward_primers) == 0 or len(reverse_primers) == 0:
 		single_index = True
@@ -276,14 +279,12 @@ def main():
 		if fdr1 > 0.1 or fdr2 > 0.1:
 			print("WARNING - FDR UNACCEPTABLY HIGH!")
 
-
 	if args.just_check_fdr:
 		return 0
 
 	to_write_d = initialise_d(forward_primers, reverse_primers)
 
-	stored_results1 = {}
-	stored_results2 = {}
+	t1 = time.time()
 
 	with dnaio.open(args.fastq) as file:
 		since_written = 0
@@ -294,6 +295,8 @@ def main():
 		forward_results = [bc1, bc2]
 		reverse_results = [bc1, bc2]
 
+		good = 0
+
 		for i, record in enumerate(file):
 
 			if len(record.sequence) < args.min_length:
@@ -302,6 +305,7 @@ def main():
 			if i % 1000 == 0 and i > 0:
 				print(i)
 
+			# Identify the barcodes
 			for rc in [True, False]:
 				if rc:
 					if args.ignore_rc:
@@ -316,21 +320,32 @@ def main():
 				s2 = seq[-args.length:]
 
 				if use_only_forward or not single_index:
-					bc1 = find_barcode(s1, forward_primers, args.min_score, args.max_ambiguity, stored_results1)
+					bc1 = find_barcode(s1, forward_primers, args.min_score, args.max_ambiguity)
 				if not use_only_forward or not single_index:
-					bc2 = find_barcode(s2, reverse_primers, args.min_score, args.max_ambiguity, stored_results2)
+					bc2 = find_barcode(s2, reverse_primers, args.min_score, args.max_ambiguity)
 
 				if rc:
 					reverse_results = [bc1, bc2]
 				else:
 					forward_results = [bc1, bc2]
 
+			# Rationalise the barcodes
 			if single_index:
 				if use_only_forward:
 					bc = rationalise_single_index(forward_results[0], reverse_results[0], args.ignore_rc)
 				else:
 					bc = rationalise_single_index(forward_results[1], reverse_results[1], args.ignore_rc)
 
+				if "no_match" not in bc:
+					good += 1
+
+			else:
+				bc1, bc2 = rationalise_paired_indexing(forward_results, reverse_results, args.ignore_rc)
+
+				if "no_match" not in [bc1, bc2]:
+					good += 1
+
+			# Write out the barcodes
 			if single_index:
 				to_write_d[bc] += "\n".join(
 					["@" + record.name, record.sequence, "+", record.qualities]) + "\n"
@@ -345,9 +360,16 @@ def main():
 
 	write_out_d(to_write_d, args.output)
 
+	t2 = time.time()
+
+	time_diff = round(t2-t1, 1)
+
+	print(f"{i} Reads demultiplexed in {time_diff} seconds.")
+	print(f"{round(100*good/i, 2)}% of reads succesfully assigned")
 
 
 if __name__ == "__main__":
+	print("### Demultiplex_nanopore_barcodes.py v0.1 ###\n")
 	main()
 
 
