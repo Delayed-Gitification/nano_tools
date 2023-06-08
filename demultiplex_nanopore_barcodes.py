@@ -80,6 +80,7 @@ def write_out_d(d, output):
 		with gzip.open(filename, mode) as file:
 			file.write(value.encode())
 
+
 def read_primers(filename):
 	# Read in primers
 	forward_primers = {}
@@ -90,6 +91,8 @@ def read_primers(filename):
 			this_name = line2[0]
 			this_bc = line2[1].upper()
 			f_or_r = line2[2].upper()
+
+			assert f_or_r == "F" or f_or_r == "R"
 
 			if f_or_r == "R":
 				this_bc = rev_c(this_bc)
