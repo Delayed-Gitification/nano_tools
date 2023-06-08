@@ -25,7 +25,7 @@ Performance is not especially rapid: roughly 500-1,000 reads are demultiplexed p
 
 ```
 --fastq/-f: This is the fastq file that you wish to demultiplex
---primers/-p: This is the csv of primers/barcodes used to generate the library (see below for formatting details)
+--primers/-p: This is the csv of primers/barcodes used to generate the library (see below for formatting details).
 --output/-o: This is the prefix (including directory) that files are written to
 
 --min_score/-s (default 90): This is the minimum partial ratio score from rapidfuzz for a match to be detected
@@ -38,7 +38,7 @@ Performance is not especially rapid: roughly 500-1,000 reads are demultiplexed p
 
 The csv must have 3 columns:
 1. The first column is the primer name (eg "forward_1")
-2. The second column is the primer sequence (this should be the 5'-3' sequence in the primer itself) (TODO check this)
+2. The second column is the barcode sequence from the primer (this should be the 5'-3' sequence in the primer itself)
 3. The third column must either be "F" or "R" depending on whether it was a forward or reverse barcode
 
 Here is an example:
