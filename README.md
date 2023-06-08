@@ -9,9 +9,9 @@ This tool demultiplexes nanopore libraries based on barcodes in the 5' or 3' end
 This enables one to, for example, generate 96 uniquely barcoded PCR products using 8 forward and 12 reverse primers.
 
 The algorithm accounts for Nanopore's relatively high error rate and lack of positional precision. For each read it:
-1. Takes the first and last N bases (default 100)
+1. Takes the first and last N bases (default 100). The first part is used to search for forward primers/barcodes and the last part is used for reverse primers/barcodes
 2. Searches for (partial) matches to each barcode using the rapidfuzz library - this allows for insertions/deletions and mismatches. 
-3. (Optionally) does the same for the reverse complement
+3. Repeats steps 1 and 2 for the reverse complement of the read (this can be disabled)
 4. Filters for matches that confidently match only a single unique barcode or barcode pair
 5. Writes each out to a separate fastq.gz file
 
@@ -40,3 +40,13 @@ The csv must have 3 columns:
 1. The first column is the primer name (eg "forward_1")
 2. The second column is the primer sequence (this should be the 5'-3' sequence in the primer itself) (TODO check this)
 3. The third column must either be "F" or "R" depending on whether it was a forward or reverse barcode
+
+Here is an example:
+```
+R1,GACATCAATTCGAACAATCC,R
+R2,TAACTTACCTGTATAGCACA,R
+R3,TTATATACATCTTCCTGGCT,R
+F1,AGAATATCTTAGACACTTGC,F
+F2,TGTTCCGTATTGCTTAACAA,F
+F3,ACTAATCCAGAGTTCTCAAG,F
+```
