@@ -40,3 +40,21 @@ The csv must have 3 columns:
 1. The first column is the primer name (eg "forward_1")
 2. The second column is the primer sequence (this should be the 5'-3' sequence in the primer itself) (TODO check this)
 3. The third column must either be "F" or "R" depending on whether it was a forward or reverse barcode
+
+Here is an example:
+```R1,GACATCAATTCGAACAATCC,R
+R2,TAACTTACCTGTATAGCACA,R
+R3,TTATATACATCTTCCTGGCT,R
+R4,AATATGTGGATCGGACTCTA,R
+R5,ACCTAACTCCTATTCATACG,R
+R6,CACACAAGCATGTTAGTCTT,R
+Rn,AGCTAGACATCGCGCAATAG,R
+R7,ATTATCGGTAACATCTGCAC,R
+F1,AGAATATCTTAGACACTTGC,F
+F2,TGTTCCGTATTGCTTAACAA,F
+F3,ACTAATCCAGAGTTCTCAAG,F
+F4,AGGTAACATGTGATCCGATA,F
+F5,ATCATTGGTTGTGTGGAATC,F
+F6,TCAAGTATGAGGAACACCAA,F
+Fn,ATTCAGTCGCGGACTAATCG,F
+```
