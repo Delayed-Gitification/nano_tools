@@ -6,7 +6,7 @@ nano_tools has several python scripts I have generated that I find useful for an
 
 This tool demultiplexes nanopore libraries based on barcodes in the 5' or 3' ends. In particular, it was designed to work with libraries generated via PCR, in which the PCR primers contain barcodes. The barcodes can be in the forward or reverse primer, or can be in both primers (in which case combinatorial demultiplexing is performed).
 
-This enables one to generate 96 uniquely barcoded PCR products using 8 forward and 12 reverse primers.
+This enables one to, for example, generate 96 uniquely barcoded PCR products using 8 forward and 12 reverse primers.
 
 The algorithm is accounts for Nanopore's relatively high error rate and lack of positional precision:
 1. Takes the first and last N bases (default 100) of each read
