@@ -62,6 +62,8 @@ This function outputs a csv table with the number of reads that have a given:
 
 The purpose of this function is to summarise data from a (targeted) RNA sequencing experiment, for easier downstream analysis of splicing.
 
+Note that in its current form, it does not take into account read pairings. As such, it is suitable for Nanopore or single-end Illumina, but not for paired-end Illumina sequencing.
+
 ## Usage
 ```
 --bam/-b: This is the fastq file that you wish to demultiplex
