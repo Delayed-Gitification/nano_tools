@@ -8,7 +8,7 @@ def write_out(file, to_write):
 
 def get_flags(flag):
 	"""
-	Creates a human-interpretable string for a given flag tag
+	Creates a human-interpretable string for a given sam flag
 	"""
 	# Convert to binary representation
 	bin_string = bin(flag)[2:]
@@ -72,11 +72,6 @@ def analyse_record(record, flag_d, min_intron_length):
 
 	flag_string = flag_d(record.flag)
 
-	if "not primary alignment" in flag_string:
-		secondary = True
-	else:
-		secondary = False
-
 	positions = record.get_reference_positions()
 
 	first_pos = min(positions)
@@ -97,12 +92,12 @@ def analyse_record(record, flag_d, min_intron_length):
 		if distance >= min_intron_length:
 			junctions.append(str(positions[i]) + "-" + str(positions[i + 1]))
 
-	to_write = ','.join(
+	analysed_string = ','.join(
 		[ref, str(mapping_quality), flag_string, strand, str(first_pos), str(last_pos)])
 
-	to_write += "," + ";".join(junctions)
+	analysed_string += "," + ";".join(junctions)
 
-	return to_write
+	return analysed_string
 
 
 def main():
