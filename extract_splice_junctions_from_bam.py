@@ -2,10 +2,6 @@ import argparse
 import pysam
 
 
-def write_out(file, to_write):
-	file.write(to_write)
-
-
 def get_flags(flag):
 	"""
 	Creates a human-interpretable string for a given sam flag
