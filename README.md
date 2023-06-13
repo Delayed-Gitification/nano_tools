@@ -50,3 +50,24 @@ F1,AGAATATCTTAGACACTTGC,F
 F2,TGTTCCGTATTGCTTAACAA,F
 F3,ACTAATCCAGAGTTCTCAAG,F
 ```
+
+# extract_splice_junctions_from_bam.py
+
+This function outputs a csv table with the number of reads that have a given:
+1. first and last alignment position
+2. set of splice junctions
+3. mapping quality
+4. sam flag
+5. strand
+
+The purpose of this function is to summarise data from a (targeted) RNA sequencing experiment, for easier downstream analysis of splicing.
+
+## Usage
+```
+--bam/-b: This is the fastq file that you wish to demultiplex
+--output/-o: This is the prefix (including directory) that files are written to
+
+--min_intron_length (default 50): This is the minimum length for a gap in the alignment to be registered as an intron
+--early_stop (default -1): An option to terminate the function after a given number of records (when negative this is disabled, hence the default of -1)
+```
+
