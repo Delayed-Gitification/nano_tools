@@ -14,7 +14,7 @@ def get_flags(flag):
 	bin_string = bin(flag)[2:]
 
 	components = []
-	for i, one_or_zero in bin_string[::-1]:
+	for i, one_or_zero in enumerate(bin_string[::-1]):
 		if one_or_zero == "1":
 			components.append(2**int(i))
 
@@ -55,7 +55,7 @@ def get_flags(flag):
 	if 2048 in components:
 		flag_list.append("supplementary alignment")
 
-	return ";".join(flag_list)
+	return "; ".join(flag_list)
 
 
 def make_flag_d():
@@ -143,14 +143,14 @@ def main():
 			except:
 				skipped += 1
 
-		with open(args.output, 'w') as out:
-			out.write("reference,mapping_quality,flag_string,strand,first_pos,last_pos,junctions,number_of_reads\n")
-			to_write = []
+	with open(args.output, 'w') as out:
+		out.write("reference,mapping_quality,flag_string,strand,first_pos,last_pos,junctions,number_of_reads\n")
+		to_write = []
 
-			for key, value in output_d.items():
-				to_write.append(key + "," + str(value))
+		for key, value in output_d.items():
+			to_write.append(key + "," + str(value))
 
-			out.write('\n'.join(to_write))
+		out.write('\n'.join(to_write))
 
 	print(str(skipped) + " skipped of " + str(record_number))
 
