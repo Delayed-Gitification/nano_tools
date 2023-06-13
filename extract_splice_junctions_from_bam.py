@@ -102,6 +102,8 @@ def analyse_record(record, flag_d, min_intron_length):
 
 	to_write += "," + ";".join(junctions)
 
+	return to_write
+
 
 def main():
 	parser = argparse.ArgumentParser()
@@ -113,20 +115,19 @@ def main():
 
 	output_d = {}
 	skipped = 0
+	record_number = 0
 
 	flag_d = make_flag_d()
 
 	with pysam.AlignmentFile(args.bam) as bam:
-		record_number = 0
 		for record in bam:
+			record_number += 1
 			try:
 				if record.is_unmapped:
 					to_write = ','.join(["NA", "NA", "NA", "NA"])
 					to_write += "," + ";".join([])
 
 				else:
-					record_number += 1
-
 					if record_number % 10_000 == 0:
 						print(record_number)
 
@@ -144,11 +145,16 @@ def main():
 
 		with open(args.output, 'w') as out:
 			out.write("reference,mapping_quality,flag_string,strand,first_pos,last_pos,junctions,number_of_reads\n")
-			for key, value in output_d.items():
-				out.write(key + "," + str(value) + "\n")
+			to_write = []
 
-	print(str(skipped) + " skipped")
+			for key, value in output_d.items():
+				to_write.append(key + "," + str(value))
+
+			out.write('\n'.join(to_write))
+
+	print(str(skipped) + " skipped of " + str(record_number))
 
 
 if __name__ == '__main__':
+	print("### extract_splice_junctions_from_bam.py v0.1 ###\n")
 	main()
