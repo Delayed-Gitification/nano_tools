@@ -53,7 +53,7 @@ F3,ACTAATCCAGAGTTCTCAAG,F
 
 # extract_splice_junctions_from_bam.py
 
-This function outputs a csv table with the number of reads that have a given:
+This tool outputs a csv table with the number of reads that have a given:
 1. first and last alignment position
 2. set of splice junctions
 3. mapping quality
@@ -68,10 +68,27 @@ Note that in its current form, it does not take into account read pairings. As s
 
 ## Usage
 ```
---bam/-b: This is the fastq file that you wish to demultiplex
+--bam/-b: This is the bam file from which splice junctions etc will be extracted
 --output/-o: This is the prefix (including directory) that files are written to
 
 --min_intron_length (default 50): This is the minimum length for a gap in the alignment to be registered as an intron
 --early_stop (default -1): An option to terminate the function after a given number of records (when negative this is disabled, hence the default of -1)
 ```
 
+
+# perform_enhanced_pileup.py
+
+This tool performs an "enhanced" pileup on a bam file and exports a compressed CSV. 
+
+It is "enhanced" in the sense that, unlike some alternative pileup tools, it includes information about insertions.
+
+There is currently no option by which to filter for specific genomic regions, but this could be added if requested.
+
+## Usage
+```
+--bam/-b: This is the bam file
+--output/-o: This is the output filename
+
+--min_aligned_length/-l (Default 20): Records with alignments shorter than this are ignored. For Nanopore, a much higher value (eg 500) may sometimes be applicable.
+--primary (Default False): Add this to only consider primary alignments (often secondary alignments are ignored anyway as they do not have sequence information)
+--min_intron_length (Default 50): 'Deletions' of this length or more are ignored in the pileup. These are common in RNA seq where they correspond to introns.
