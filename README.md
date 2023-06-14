@@ -51,6 +51,8 @@ F2,TGTTCCGTATTGCTTAACAA,F
 F3,ACTAATCCAGAGTTCTCAAG,F
 ```
 
+If you only have barcodes on the forward primers, or only on the reverse primers, you still need to put an F or R (respectively) in the third column of each entry.
+
 # extract_splice_junctions_from_bam.py
 
 This tool outputs a csv table with the number of reads that have a given:
