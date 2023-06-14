@@ -60,7 +60,9 @@ This function outputs a csv table with the number of reads that have a given:
 4. sam flag
 5. strand
 
-The purpose of this function is to summarise data from a (targeted) RNA sequencing experiment, for easier downstream analysis of splicing.
+The purpose of this function is to summarise data from a (targeted) RNA sequencing experiment, for easier downstream analysis of splicing. 
+
+It will produce reasonably small files for targeted RNA seq, but files will likely be huge for general RNA seq.
 
 Note that in its current form, it does not take into account read pairings. As such, it is suitable for Nanopore or single-end Illumina, but not for paired-end Illumina sequencing.
 
