@@ -82,7 +82,7 @@ def main():
 				if not started:
 					continue  # true alignment hasn't started yet so continue
 
-				if p is not None:  # therefore is digit, therefore genuinely aligned to a reference position
+				if p is not None:  # therefore genuinely aligned to a reference position
 					# It is aligned therefore not a position of a read insertion, therefore reset counter
 					insertion_counter = 0
 
@@ -118,4 +118,5 @@ def main():
 
 
 if __name__ == "__main__":
+	print("### perform_enhanced_pileup.py v0.1 ###\n")
 	main()
