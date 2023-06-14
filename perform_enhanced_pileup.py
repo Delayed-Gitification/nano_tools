@@ -87,20 +87,20 @@ def main():
 					insertion_counter = 0
 
 					# Add this position to the pileup as it is aligned
-					add_to_dict(d, make_key(rname, p, seq[seq_pos]))
+					d = add_to_dict(d, make_key(rname, p, seq[seq_pos]))
 
 					# Check if there is a deletion in the read between this position and the previous position
 					if args.min_intron_length > p - prev_pos > 1:  # short deletion in read
 						# Add deletion to pileup for every single position in deleted region
 						for i in range(prev_pos + 1, p):
-							add_to_dict(d, make_key(rname, i, "del"))
+							d = add_to_dict(d, make_key(rname, i, "del"))
 
 					prev_pos = p
 
 				else:  # i.e. p == None, therefore it's an insertion in the read that isn't in the reference
 					insertion_counter += 1
 					this_pos = prev_pos
-					add_to_dict(d, make_key(rname, this_pos, seq[seq_pos], insertion=insertion_counter))
+					d = add_to_dict(d, make_key(rname, this_pos, seq[seq_pos], insertion=insertion_counter))
 
 				if p == last_pos:
 					break
