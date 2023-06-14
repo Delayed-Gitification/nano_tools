@@ -368,7 +368,7 @@ def main():
 	time_diff = round(t2-t1, 1)
 
 	print(f"{i} Reads demultiplexed in {time_diff} seconds.")
-	print(f"{round(100*good/i, 2)}% of reads succesfully assigned")
+	print(f"{round(100*good/i, 2)}% of reads successfully assigned")
 
 
 if __name__ == "__main__":
