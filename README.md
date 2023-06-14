@@ -84,7 +84,7 @@ This tool performs an "enhanced" pileup on a bam file and exports a compressed C
 
 It is "enhanced" in the sense that, unlike some alternative pileup tools, it includes information about insertions.
 
-There is currently no option by which to filter for specific genomic regions, but this could be added if requested.
+There is currently no option to filter for specific genomic regions, but this could be added if requested.
 
 ## Usage
 ```
