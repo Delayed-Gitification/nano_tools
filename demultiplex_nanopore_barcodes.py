@@ -179,7 +179,7 @@ def get_args():
 	                                                                            "read")
 	parser.add_argument("--just_check_fdr", action="store_true", default=False, help="Check FDR of primers")
 	parser.add_argument("-o", "--output", required=True)
-	parser.add_argument("--chunk", default=500, type=int)
+	parser.add_argument("--chunk", default=10_000, type=int)
 	parser.add_argument("--min_length", default=1, type=int)
 	parser.add_argument("--fdr_n", default=10_000, type=int, help="Number of random seqs to calculate FDR")
 	args = parser.parse_args()
