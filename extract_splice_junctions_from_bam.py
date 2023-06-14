@@ -1,11 +1,14 @@
 import argparse
 import pysam
+import gzip
 
 
 def get_flags(flag):
 	"""
 	Creates a human-interpretable string for a given sam flag
 	"""
+	if flag == 0:
+		return ""
 	# Convert to binary representation
 	bin_string = bin(flag)[2:]
 
@@ -66,7 +69,7 @@ def analyse_record(record, flag_d, min_intron_length):
 	This function analyses a single bam record
 	"""
 
-	flag_string = flag_d(record.flag)
+	flag_string = flag_d[record.flag]
 
 	positions = record.get_reference_positions()
 
@@ -89,7 +92,7 @@ def analyse_record(record, flag_d, min_intron_length):
 			junctions.append(str(positions[i]) + "-" + str(positions[i + 1]))
 
 	analysed_string = ','.join(
-		[ref, str(mapping_quality), flag_string, strand, str(first_pos), str(last_pos)])
+		[ref, str(mapping_quality), str(record.flag), flag_string, strand, str(first_pos), str(last_pos)])
 
 	analysed_string += "," + ";".join(junctions)
 
@@ -98,10 +101,10 @@ def analyse_record(record, flag_d, min_intron_length):
 
 def main():
 	parser = argparse.ArgumentParser()
-	parser.add_argument("-b", "--bam", required=True)
-	parser.add_argument("--min_intron_length", default=50, type=int)
-	parser.add_argument("-o", "--output", required=True)
-	parser.add_argument("--early_stop", default=-1, type=int)
+	parser.add_argument("-b", "--bam", required=True, help="Bam file")
+	parser.add_argument("-o", "--output", required=True, help="Output filename")
+	parser.add_argument("--min_intron_length", default=50, type=int, help="Minimum intron length (default 50)")
+	parser.add_argument("--early_stop", default=-1, type=int, help="Stop after N records")
 	args = parser.parse_args()
 
 	output_d = {}
@@ -134,14 +137,17 @@ def main():
 			except:
 				skipped += 1
 
-	with open(args.output, 'w') as out:
-		out.write("reference,mapping_quality,flag_string,strand,first_pos,last_pos,junctions,number_of_reads\n")
+	if args.output[-3:] != ".gz":
+		args.output += ".gz"
+
+	with gzip.open(args.output, 'wb') as out:
+		out.write(b"reference,mapping_quality,flag,flag_string,strand,first_pos,last_pos,junctions,number_of_reads\n")
 		to_write = []
 
 		for key, value in output_d.items():
 			to_write.append(key + "," + str(value))
 
-		out.write('\n'.join(to_write))
+		out.write('\n'.join(to_write).encode())
 
 	print(str(skipped) + " skipped of " + str(record_number))
 
