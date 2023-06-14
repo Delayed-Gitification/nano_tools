@@ -1,6 +1,6 @@
 # nano_tools
 
-nano_tools is a collection of several python scripts I have generated that I find useful for analysing nanopore data.
+nano_tools is a collection of python scripts I created that I find useful for analysing nanopore data.
 
 # demultiplex_nanopore_barcodes.py
 
