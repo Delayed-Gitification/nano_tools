@@ -109,7 +109,7 @@ def main():
 	if args.output[-3:] != ".gz":
 		args.output += ".gz"
 	with gzip.open(args.output, 'wb') as file:
-		file.write(b"reference_name,position,nt,n,insertion_number,total_reads\n")
+		file.write(b"reference_name,position,insertion_number,nt,n,total_reads\n")
 		to_write = []
 		for key, value in d.items():
 			to_write.append(key + "," + str(value) + "," + str(n_reads))
