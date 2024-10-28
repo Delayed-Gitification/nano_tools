@@ -93,8 +93,7 @@ def main():
                 continue
 
             # Check barcode is the right length
-            if barcode_end - barcode_start != barcode_position_d[record.reference_name]['end'] - \
-                    barcode_position_d[record.reference_name]['start']:
+            if barcode_end - barcode_start != len(args.bc_seq):
                 skipped_due_to_wrong_size += 1
                 continue
 
