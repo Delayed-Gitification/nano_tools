@@ -94,3 +94,23 @@ There is currently no option to filter for specific genomic regions, but this co
 --min_aligned_length/-l (Default 20): Records with alignments shorter than this are ignored. For Nanopore, a much higher value (eg 500) may sometimes be applicable.
 --primary (Default False): Add this to only consider primary alignments (often secondary alignments are ignored anyway as they do not have sequence information)
 --min_intron_length (Default 50): 'Deletions' of this length or more are ignored in the pileup. These are common in RNA seq where they correspond to introns.
+
+
+
+# extract_barcodes.py
+
+This tool extracts barcodes from reads. It is designed with MPRA-style experiments in mind.
+
+Workflow:
+1. Create a reference fasta, which must include your barcode. The barcode with have a sequence like NNNNNN
+2. Align to the reference fasta using minimap2
+3. Now use extract_barcodes.py to extract the barcode corresponding to each read
+
+The output is a csv.gz file, featuring the barcode extracted from each sequence (unique query_name is given), plus some phred score info
+
+## Usage
+```
+-b/--bam - the bam file you've make in step 2
+-f/--fasta - the reference fasta you made in step 1
+-o/--output - the name of the output. Recommended to use the suffix .csv.gz
+-bc/--bc_seq - the string you used to denote the barcode in your reference fasta. E.g. NNNNNN or HHHH etc.
