@@ -56,6 +56,7 @@ def main():
 
     # First, read in the fasta file and search for barcode positions for each
     fasta_dict = read_fasta_to_dict(args.fasta)
+
     barcode_position_d = {}
     for name, sequence in fasta_dict.items():
         assert args.bc_seq in sequence, "Can't find barcode in fasta reference sequence: " + name
@@ -64,8 +65,9 @@ def main():
         barcode_position_d[name] = {'start': bc_start, 'end': bc_end}
 
     # Now go through each record in the bam file
-    to_write = ["qname,barcode,min_phred,mean_phred"]
+    to_write = ["query_name,barcode,min_phred,mean_phred"]
     skipped_due_to_phred = 0
+    skipped_due_to_wrong_size = 0
     with pysam.AlignmentFile(args.bam, "rb") as samfile:
         for record in samfile:
             if record.is_secondary:
@@ -77,13 +79,13 @@ def main():
             if record.is_unmapped:
                 continue
 
-            assert record.rname in fasta_dict.keys(), 'Reference fasta does not contain sequence: ' + record.rname
+            assert record.reference_name in fasta_dict.keys(), 'Reference fasta does not contain sequence: ' + record.reference_name
 
             pair_d = make_pair_d(record.get_aligned_pairs())
 
             try:
-                barcode_start = pair_d[fasta_dict[record.rname['start']]]
-                barcode_end = pair_d[fasta_dict[record.rname['end']]]
+                barcode_start = pair_d[barcode_position_d[record.reference_name]['start']]
+                barcode_end = pair_d[barcode_position_d[record.reference_name]['end']]
             except:
                 continue
 
@@ -91,12 +93,13 @@ def main():
                 continue
 
             # Check barcode is the right length
-            if barcode_end - barcode_start != fasta_dict[record.rname['end']] - fasta_dict[record.rname['start']]:
+            if barcode_end - barcode_start != barcode_position_d[record.reference_name]['end'] - \
+                    barcode_position_d[record.reference_name]['start']:
+                skipped_due_to_wrong_size += 1
                 continue
 
             barcode = record.query_sequence[barcode_start:barcode_end]
-            phred_string = record.query_qualities[barcode_start:barcode_end]
-            phred = phred_to_numeric(phred_string)
+            phred = record.query_qualities[barcode_start:barcode_end]
 
             min_phred = min(phred)
             if min_phred < args.min_phred:
@@ -108,12 +111,14 @@ def main():
                 skipped_due_to_phred += 1
                 continue
 
-            to_write.append(f"{record.qname},{barcode},{min_phred},{mean_phred}")
+            to_write.append(f"{record.query_name},{barcode},{min_phred},{mean_phred}")
 
     with gzip.open(args.output, 'wb') as out:
         out.write(('\n'.join(to_write) + '\n').encode())
 
+    print(f"{skipped_due_to_wrong_size} reads skipped due to wrong barcode length")
     print(f"{skipped_due_to_phred} reads skipped due to failing phred-score threshold")
+    print(f"{len(to_write) - 1} barcodes extracted successfully")
 
 
 if __name__ == "__main__":
