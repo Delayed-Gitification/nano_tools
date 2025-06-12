@@ -126,12 +126,13 @@ def main():
                         bc_with_flanks_found = True
 
             if not bc_with_flanks_found or not args.search_flanks:
-                if record.mapping_quality < args.min_mapq:
-                    skipped_due_to_mapq += 1
-                    continue
+
                 if record.is_unmapped:
                     skipped_because_unmapped += 1
                     continue
+                if record.mapping_quality < args.min_mapq:
+                    skipped_due_to_mapq += 1
+                    continue                    
 
                 assert record.reference_name in fasta_dict.keys(), 'Reference fasta does not contain sequence: ' + record.reference_name
 
