@@ -95,6 +95,8 @@ def main():
     skipped_due_to_phred = 0
     skipped_due_to_wrong_size = 0
     skipped_due_to_barcode_not_found = 0
+    skipped_due_to_mapq = 0
+    skipped_because_unmapped = 0
 
     with pysam.AlignmentFile(args.bam, "rb") as samfile:
         for record in samfile:
@@ -125,8 +127,10 @@ def main():
 
             if not bc_with_flanks_found or not args.search_flanks:
                 if record.mapping_quality < args.min_mapq:
+                    skipped_due_to_mapq += 1
                     continue
                 if record.is_unmapped:
+                    skipped_because_unmapped += 1
                     continue
 
                 assert record.reference_name in fasta_dict.keys(), 'Reference fasta does not contain sequence: ' + record.reference_name
@@ -169,6 +173,8 @@ def main():
     print(f"{skipped_due_to_barcode_not_found} reads skipped due to barcode not found")
     print(f"{skipped_due_to_wrong_size} reads skipped due to wrong barcode length")
     print(f"{skipped_due_to_phred} reads skipped due to failing phred-score threshold")
+    print(f"{skipped_due_to_mapq} reads skipped due to failing mapq threshold (and, if applicable, flanks were not found)")
+    print(f"{skipped_because_unmapped} reads skipped because unmapped (and, if applicable, flanks were not found)")
     print(f"{len(to_write) - 1} barcodes extracted successfully")
 
 
