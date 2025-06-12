@@ -97,6 +97,7 @@ def main():
     skipped_due_to_barcode_not_found = 0
     skipped_due_to_mapq = 0
     skipped_because_unmapped = 0
+    total_primary_records = 0
 
     with pysam.AlignmentFile(args.bam, "rb") as samfile:
         for record in samfile:
@@ -104,6 +105,8 @@ def main():
                 continue
             if record.is_supplementary:
                 continue
+
+            total_primary_records += 1
 
             if args.search_flanks:
                 bc_with_flanks_found = False  # assume not
@@ -176,7 +179,7 @@ def main():
     print(f"{skipped_due_to_phred} reads skipped due to failing phred-score threshold")
     print(f"{skipped_due_to_mapq} reads skipped due to failing mapq threshold (and, if applicable, flanks were not found)")
     print(f"{skipped_because_unmapped} reads skipped because unmapped (and, if applicable, flanks were not found)")
-    print(f"{len(to_write) - 1} barcodes extracted successfully")
+    print(f"{len(to_write) - 1} barcodes extracted successfully from {total_primary_records} total primary records")
 
 
 if __name__ == "__main__":
