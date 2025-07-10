@@ -36,13 +36,13 @@ def read_fasta_to_dict(fasta_file):
             line = line.strip()
             if line.startswith(">"):  # Header line
                 if identifier:  # Save the previous entry
-                    fasta_dict[identifier] = ''.join(sequence)
+                    fasta_dict[identifier] = ''.join(sequence).upper()
                 identifier = line[1:]  # Remove the ">" and use the rest as identifier
                 sequence = []  # Reset the sequence list for the new entry
             else:
-                sequence.append(line)  # Collect sequence lines
+                sequence.append(line.upper())  # Collect sequence lines
         if identifier:  # Save the last entry
-            fasta_dict[identifier] = ''.join(sequence)
+            fasta_dict[identifier] = ''.join(sequence).upper()
     return fasta_dict
 
 
@@ -97,6 +97,7 @@ def main():
     skipped_due_to_barcode_not_found = 0
     skipped_due_to_mapq = 0
     skipped_because_unmapped = 0
+    skipped_because_no_suitable_alignment = 0
     total_primary_records = 0
 
     with pysam.AlignmentFile(args.bam, "rb") as samfile:
@@ -145,6 +146,7 @@ def main():
                     barcode_start = pair_d[barcode_position_d[record.reference_name]['start']]
                     barcode_end = pair_d[barcode_position_d[record.reference_name]['end']]
                 except:
+                    skipped_because_no_suitable_alignment += 1
                     continue
 
                 if barcode_start is None or barcode_end is None:
@@ -179,6 +181,7 @@ def main():
     print(f"{skipped_due_to_phred} reads skipped due to failing phred-score threshold")
     print(f"{skipped_due_to_mapq} reads skipped due to failing mapq threshold (and, if applicable, flanks were not found)")
     print(f"{skipped_because_unmapped} reads skipped because unmapped (and, if applicable, flanks were not found)")
+    print(f"{skipped_because_no_suitable_alignment} reads skipped because no good alignment near barcode (and, if applicable, flanks were not found)")
     print(f"{len(to_write) - 1} barcodes extracted successfully from {total_primary_records} total primary records")
 
 
