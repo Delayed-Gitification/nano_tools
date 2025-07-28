@@ -168,8 +168,8 @@ def get_args():
 	parser.add_argument("-f", "--fastq", required=True)
 	parser.add_argument("-p", "--primers", required=True, help="This should be a headerless, three column csv with "
 	                                                           "columns 1=name,2=barcode,3=f or r")
-	parser.add_argument("-s", "--min_score", type=float, default=90, help="When matching barcodes")
-	parser.add_argument("--max_ambiguity", type=float, default=84, help="If another barcode has this score or higher, "
+	parser.add_argument("-s", "--min_score", type=float, default=95, help="When matching barcodes")
+	parser.add_argument("--max_ambiguity", type=float, default=90, help="If another barcode has this score or higher, "
 	                                                                    "then ignore this read because it's ambiguous")
 	parser.add_argument("-l", "--length", type=int, default=100, help="length to look at start and end of reads "
 	                                                                 "for barcode")
