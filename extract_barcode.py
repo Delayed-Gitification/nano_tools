@@ -2,6 +2,7 @@ import pysam
 import argparse
 import statistics
 import gzip
+import re
 
 
 def make_pair_d(pairs):
@@ -18,13 +19,9 @@ def make_pair_d(pairs):
     return d
 
 
-def reverse_complement(dna_sequence):
-    complement = {'A': 'T', 'T': 'A', 'C': 'G', 'G': 'C'}
-    return ''.join(complement[base] for base in reversed(dna_sequence))
-
-
-def phred_to_numeric(phred_string):
-    return [ord(char) - 33 for char in phred_string]
+def reverse_complement(seq):
+    table = str.maketrans("ACGTNacgtn", "TGCANtgcan")
+    return seq.translate(table)[::-1]
 
 
 def read_fasta_to_dict(fasta_file):
@@ -55,14 +52,18 @@ def main():
                                                                "in the fasta file. Eg NNNNNNN or HHHHH")
     parser.add_argument("--min_mapq", required=False, type=float, help="Minimum mapping quality",
                         default=0)
-    parser.add_argument('--min_phred', required=False, default=0, help="Minimum phred score of barcode")
-    parser.add_argument('--mean_phred', required=False, default=0, help="Minimum average phred score of barcode")
+    parser.add_argument('--min_phred', required=False, type=float, default=0.0,
+                        help="Minimum phred score of barcode")
+    parser.add_argument('--mean_phred', required=False, type=float, default=0.0,
+                        help="Minimum average phred score of barcode")
     parser.add_argument('--search_flanks', action='store_true', default=False, help='Also use a simpler approach of'
                                                                                     'searching for the barcode flanking sequences. May '
                                                                                     'moderately increase barcode numbers for records '
                                                                                     'where the alignment failed.')
     parser.add_argument('--flank_size', default=8, type=int, help="When using --search_flanks, this sets how long "
                                                                   "the flanks are.")
+    parser.add_argument("--dont_filter_concatemers", default=False, action="store_true", help="By default, the software will"
+        "ensure that the flanking sequence (with correct spacing) occurs at most only once in the read")
     args = parser.parse_args()
 
     # First, read in the fasta file and search for barcode positions for each
@@ -90,6 +91,12 @@ def main():
         upstream_flank = upstream_flanks.pop()
         downstream_flank = downstream_flanks.pop()
 
+        flank_qc_f = upstream_flank + "."*len(args.bc_seq) + downstream_flank
+        flank_qc_r = reverse_complement(downstream_flank) + "."*len(args.bc_seq) + reverse_complement(upstream_flank)
+
+        regex_qc_f = re.compile(flank_qc_f)
+        regex_qc_r = re.compile(flank_qc_r)
+
     # Now go through each record in the bam file
     to_write = ["query_name,barcode,min_phred,mean_phred"]
     skipped_due_to_phred = 0
@@ -99,6 +106,7 @@ def main():
     skipped_because_unmapped = 0
     skipped_because_no_suitable_alignment = 0
     total_primary_records = 0
+    multiple_flanks_found = 0
 
     with pysam.AlignmentFile(args.bam, "rb") as samfile:
         for record in samfile:
@@ -109,7 +117,24 @@ def main():
 
             total_primary_records += 1
 
+            # Perform concatemer check
+            count_f = len(regex_qc_f.findall(record.query_sequence))
+            count_r = len(regex_qc_r.findall(record.query_sequence))
+
+            if count_f + count_r > 1:
+                if args.dont_filter_concatemers:
+                    # just warn
+                    multiple_flanks_found += 1
+
+                else:
+                    # actually skip
+                    multiple_flanks_found += 1
+                    continue
+                
+
+            # Now search for barcodes
             if args.search_flanks:
+
                 bc_with_flanks_found = False  # assume not
                 barcode_start = record.query_sequence.find(upstream_flank) + len(upstream_flank)
                 barcode_end = record.query_sequence.find(downstream_flank)
@@ -128,6 +153,8 @@ def main():
                         barcode = reverse_complement(sequence_rev_c[barcode_start:barcode_end])
                         phred = record.query_qualities[::-1][barcode_start:barcode_end]
                         bc_with_flanks_found = True
+
+
 
             if not bc_with_flanks_found or not args.search_flanks:
 
@@ -182,7 +209,14 @@ def main():
     print(f"{skipped_due_to_mapq} reads skipped due to failing mapq threshold (and, if applicable, flanks were not found)")
     print(f"{skipped_because_unmapped} reads skipped because unmapped (and, if applicable, flanks were not found)")
     print(f"{skipped_because_no_suitable_alignment} reads skipped because no good alignment near barcode (and, if applicable, flanks were not found)")
+    if args.search_flanks and multiple_flanks_found > 0:
+        if args.dont_filter_concatemers:
+            print(f"Warning, {multiple_flanks_found} reads found with mulitple flanks (concatemers?)")
+        else:
+            print(f"{multiple_flanks_found} reads skipped due to mulitple flanks (concatemers?)")
     print(f"{len(to_write) - 1} barcodes extracted successfully from {total_primary_records} total primary records")
+
+
 
 
 if __name__ == "__main__":
