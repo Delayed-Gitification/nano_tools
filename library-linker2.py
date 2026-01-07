@@ -9,9 +9,275 @@ import spoa
 from numba import njit, prange
 from sklearn.cluster import AgglomerativeClustering
 from scipy.cluster.hierarchy import dendrogram
+import edlib
+from collections import namedtuple, Counter, defaultdict
+import mappy as mp
+import sys
+from dataclasses import dataclass
+
+
+@dataclass
+class AlignmentStats:
+    read_id: str
+    read_len: int
+    ref_start: int
+    ref_end: int
+    strand: int  # 1 for forward, -1 for reverse
+    matches: int  # Number of matching bases
+    block_len: int  # Length of the alignment block on the reference
+    nm: int  # Edit distance (mismatches + gaps)
+    error_rate: float
+    is_valid: bool  # Flag if you want to filter later (e.g. alignment too short)
+
+
+def estimate_error_rates(fastq_path, reference_seq, min_length=3000):
+    """
+    Aligns reads to a specific backbone sequence and calculates error rates.
+    """
+    print(f"Building index for reference ({len(reference_seq)} bp)...", file=sys.stderr)
+
+    # 1. Create Aligner from the string directly
+    # 'preset="map-ont"' is optimized for Nanopore reads
+    aligner = mp.Aligner(seq=reference_seq, preset="map-ont")
+
+    if not aligner:
+        raise ValueError("Failed to build index. Is the sequence empty?")
+
+    stats_storage = []
+
+    print(f"Processing {fastq_path}...", file=sys.stderr)
+
+    for name, seq, qual in mp.fastx_read(fastq_path):
+        if len(seq) < min_length:
+            continue
+
+        # Align read to the backbone section
+        # mappy.map() returns a generator of alignments
+        hits = list(aligner.map(seq))
+
+        if not hits:
+            continue
+
+        # 2. Find Best Single Alignment
+        # Strategy: Sort by 'mlen' (matched length) descending.
+        # The hit with the most matching bases is almost always the "primary" alignment.
+        best_hit = sorted(hits, key=lambda x: x.mlen, reverse=True)[0]
+
+        # 3. Calculate Stats
+        # nm = Edit Distance (mismatches + insertions + deletions)
+        # blen = Alignment block length on the reference
+        # Error Rate = Edit Distance / (Reference Span)
+        # (You could also use seq length, but ref span is standard for 'divergence')
+
+        if best_hit.blen == 0: continue
+
+        err_rate = best_hit.NM / best_hit.blen
+
+        # Store in RAM
+        stat = AlignmentStats(
+            read_id=name,
+            read_len=len(seq),
+            ref_start=best_hit.r_st,
+            ref_end=best_hit.r_en,
+            strand=best_hit.strand,
+            matches=best_hit.mlen,
+            block_len=best_hit.blen,
+            nm=best_hit.NM,
+            error_rate=err_rate,
+            is_valid=True
+        )
+
+        stats_storage.append(stat)
+
+    return stats_storage
+
+
+# --- ANALYSIS HELPER ---
+def analyze_errors(stats_list):
+    if not stats_list:
+        print("No alignments found.")
+        return
+
+    # Filter for valid alignments only
+    valid_stats = [s for s in stats_list if s.is_valid]
+
+    if not valid_stats:
+        print("No valid alignments passed the length filter.")
+        return
+
+    # Extract error rates
+    errors = [s.error_rate for s in valid_stats]
+
+    print("\n--- ERROR RATE ANALYSIS ---")
+    print(f"Total Reads Aligned: {len(stats_list)}")
+    print(f"Valid Alignments (>200bp): {len(valid_stats)}")
+    print(f"Mean Error Rate:   {statistics.mean(errors):.2%}")
+    print(f"Median Error Rate: {statistics.median(errors):.2%}")
+    print(f"Min Error Rate:    {min(errors):.2%}")
+    print(f"Max Error Rate:    {max(errors):.2%}")
+
+    return errors
 
 
 def gen_dna(k): return "".join(random.choices("ACGT", k=k))
+
+
+# --- CONFIGURATION ---
+try:
+    sys.set_int_max_str_digits(0)  # Allow massive integers for inserts
+except AttributeError:
+    pass
+
+DNA_TO_DIGITS = str.maketrans("ACGTN", "01234")
+DIGITS_TO_DNA = {0: 'A', 1: 'C', 2: 'G', 3: 'T', 4: 'N'}
+
+
+# --- COMPRESSION UTILS ---
+def compress_dna(seq_str):
+    if not seq_str: return None
+    return int(seq_str.translate(DNA_TO_DIGITS), 5)
+
+
+def decompress_dna(val, length):
+    if val is None: return "NA"
+    chars = []
+    for _ in range(length):
+        remainder = val % 5
+        chars.append(DIGITS_TO_DNA[remainder])
+        val //= 5
+    return "".join(reversed(chars))
+
+
+# --- ALIGNMENT LOGIC ---
+Hit = namedtuple('Hit', ['r_st', 'r_en', 'strand', 'score'])
+
+
+def get_best_hit_edlib(target_seq, query_seq, query_rc, threshold_pct=0.20):
+    best_hit = None
+    best_ed = float('inf')
+    candidates = [(query_seq, 1), (query_rc, -1)]
+    max_dist = int(len(query_seq) * threshold_pct)
+
+    for seq, strand_val in candidates:
+        result = edlib.align(seq, target_seq, mode="HW", task="locations", k=max_dist)
+        if result['editDistance'] == -1: continue
+
+        if result['editDistance'] < best_ed:
+            best_ed = result['editDistance']
+            loc = result['locations'][0]
+            best_hit = Hit(loc[0], loc[1] + 1, strand_val, result['editDistance'])
+
+    return best_hit
+
+
+def extract_region(read_seq, f5, f5_rc, f3, f3_rc, max_len=10000):
+    h5 = get_best_hit_edlib(read_seq, f5, f5_rc)
+    h3 = get_best_hit_edlib(read_seq, f3, f3_rc)
+
+    if not h5 or not h3:
+        if not h5 and not h3: return None, "Both Flanks Missing"
+        if not h5: return None, "5' Flank Missing"
+        if not h3: return None, "3' Flank Missing"
+
+    if h5.strand != h3.strand: return None, "Flank orientation mismatch"
+
+    if h5.strand == 1:
+        if h5.r_en >= h3.r_st: return None, "Overlap/Swap"
+        dist = h3.r_st - h5.r_en
+        if dist > max_len: return None, "Region too long"
+        return read_seq[h5.r_en: h3.r_st], "PASS"
+    else:
+        if h3.r_en >= h5.r_st: return None, "RC Overlap/Swap"
+        dist = h5.r_st - h3.r_en
+        if dist > max_len: return None, "Region too long"
+        return mp.revcomp(read_seq[h3.r_en: h5.r_st]), "PASS"
+
+
+# --- MAIN PIPELINE ---
+def process_fastq(fastq_path, bc_5p, bc_3p, ins_5p, ins_3p, min_length_fastq=1000):
+    print(f"Processing: {fastq_path} (Inverted Index Mode)...", file=sys.stderr)
+
+    bc_5p_rc = mp.revcomp(bc_5p)
+    bc_3p_rc = mp.revcomp(bc_3p)
+    ins_5p_rc = mp.revcomp(ins_5p)
+    ins_3p_rc = mp.revcomp(ins_3p)
+
+    bc_stats = Counter()
+    ins_stats = Counter()
+    total_processed = 0
+
+    # --- NEW STORAGE STRUCTURE ---
+    # 1. A simple list of compressed inserts. Access by index.
+    inserts_list = []
+
+    # 2. A dictionary mapping Barcode -> List of Indices in inserts_list
+    # Example: { "ATGC": [0, 5, 12], "NA": [1, 3] }
+    barcode_map = defaultdict(list)
+
+    passed_hashes = set()
+
+    for name, seq, qual in mp.fastx_read(fastq_path):
+        if len(seq) < min_length_fastq: continue
+        total_processed += 1
+
+        bc_seq, bc_stat = extract_region(seq, bc_5p, bc_5p_rc, bc_3p, bc_3p_rc, max_len=100)
+        ins_seq, ins_stat = extract_region(seq, ins_5p, ins_5p_rc, ins_3p, ins_3p_rc, max_len=10000)
+
+        # Simplify Stats
+        if bc_stat and "Region too long" in bc_stat: bc_stat = "Region too long"
+        if ins_stat and "Region too long" in ins_stat: ins_stat = "Region too long"
+        bc_stats[bc_stat] += 1
+        ins_stats[ins_stat] += 1
+
+        if total_processed % 5000 == 0:
+            print(f"\rProcessed {total_processed} reads...", end="", file=sys.stderr)
+
+        # --- STORAGE LOGIC ---
+        if not bc_seq or not ins_seq:
+            continue
+
+        passed_hashes.add(hash(name))
+
+        # 1. Compress Insert
+        ins_comp = compress_dna(ins_seq)
+        ins_len = len(ins_seq) if ins_seq else 0
+
+        # 2. Append to Master List
+        inserts_list.append((ins_comp, ins_len))
+
+        # 3. Get the Index of the item we just added
+        current_index = len(inserts_list) - 1
+
+        # 4. Update Index (Dictionary)
+        bc_key = bc_seq
+        barcode_map[bc_key].append(current_index)
+
+    print(f"\rDone. Processed {total_processed} reads.      ", file=sys.stderr)
+
+    # Print Summary
+    def print_table(title, stats):
+        print(f"\n=== {title} SUMMARY ===")
+        for k, v in stats.most_common():
+            print(f"{k:<30} | {v:<8} | {(v / total_processed) * 100:.1f}%")
+
+    if total_processed > 0:
+        print_table("BARCODE", bc_stats)
+        print_table("INSERT", ins_stats)
+
+    # ... existing code (after print_table calls) ...
+
+    # NEW: Second pass to write failed reads
+    fail_file = "/Users/ogw/Downloads/failed_reads.fastq"
+    print(f"Writing failed reads to {fail_file}...", file=sys.stderr)
+
+    with open(fail_file, "w") as out_f:
+        for name, seq, qual in mp.fastx_read(fastq_path):
+            if len(seq) < min_length_fastq:
+                continue
+            if hash(name) not in passed_hashes:
+                out_f.write(f"@{name}\n{seq}\n+\n{qual}\n")
+
+    return inserts_list, barcode_map
 
 
 class GlobalTimer:
@@ -553,9 +819,9 @@ def check_cluster_integrity_mi_hyper_optimized(cluster_df, expected_error_rate, 
     inserts = cluster_df['Insert'].tolist()
     n_members = len(barcodes)
 
-    if n_members <= 5:
-        timer.stop("MI_Integrity_Check_Total")
-        return False
+    # if n_members <= 5:
+    #     timer.stop("MI_Integrity_Check_Total")
+    #     return False
 
     # 1. Alignment & Encoding
     timer.start("SPOA_alignment")
@@ -563,7 +829,7 @@ def check_cluster_integrity_mi_hyper_optimized(cluster_df, expected_error_rate, 
     _, msa_inserts = fast_spoa(inserts, algorithm=1)
     timer.stop("SPOA_alignment")
 
-    msa_strings = [b + "-" * 1 + i for b, i in zip(msa_barcodes, msa_inserts)]
+    msa_strings = [b + "-" * 1 + i for b, i in zip(msa_barcodes, msa_inserts)]  # TODO, why only *1? Can't think why this would be beneficial here
     msa_int, vocab_size = encode_msa(msa_strings)
 
     alphabet = "ACGTN-"
@@ -614,8 +880,7 @@ def check_cluster_integrity_mi_hyper_optimized(cluster_df, expected_error_rate, 
     N_BATCH = 20
     N_MAX_SIMS = 100
 
-    # Assume outlier is True until we prove it's safe (or run out of sims)
-    # However, for the loop logic, we track the state per iteration.
+    # Assume false
     is_outlier = False
 
     for n_current_sims in range(N_BATCH, N_MAX_SIMS + 1, N_BATCH):
@@ -718,7 +983,7 @@ def calculate_msa_mi_and_top_cols(barcodes, inserts, verbose=0, mi_exclusion_dis
     return msa_int, mi_matrix_reduced, top_cols_original, len_msa_inserts, kept_indices
 
 
-def cluster_msa_subset(msa_subset, expected_error_rate, error_rate_multiplier=None, jump_thresh=None):
+def cluster_msa_subset(msa_subset, error_rates, error_rate_multiplier=None, jump_thresh=None):
     timer.start("hamming_distance_matrix")
     dist_matrix_subset = pairwise_distances(msa_subset, metric='hamming')
     timer.stop("hamming_distance_matrix")
@@ -726,12 +991,14 @@ def cluster_msa_subset(msa_subset, expected_error_rate, error_rate_multiplier=No
     if dist_matrix_subset.shape[0] == 1:
         return dist_matrix_subset, np.array([0])
 
+    expected_error_rate = np.median(error_rates)  # TODO is median justified? Or should we use 95th percentile etc?
+
     if error_rate_multiplier is not None:
         d_thresh = expected_error_rate * error_rate_multiplier
     else:
         temp = dist_matrix_subset.copy()
         np.fill_diagonal(temp, np.inf)
-        d_thresh = np.min(temp) * jump_thresh + expected_error_rate
+        d_thresh = np.min(temp) * jump_thresh + expected_error_rate  # TODO is this used any more?
 
     timer.start("agglomerative_clustering")
     agg = AgglomerativeClustering(metric="precomputed", linkage="single", distance_threshold=d_thresh, n_clusters=None)
@@ -740,29 +1007,43 @@ def cluster_msa_subset(msa_subset, expected_error_rate, error_rate_multiplier=No
     return dist_matrix_subset, labels
 
 
-def cluster_barcode_insert_pairs(barcodes, inserts, mi_exclusion_distance, expected_error_rate,
+def cluster_barcode_insert_pairs(barcodes, inserts, mi_exclusion_distance, error_rates,
                                  error_rate_multiplier=None, jump_thresh=None, verbose=0, subset_msa=True):
+
     msa_int, mi_matrix, top_cols, len_msa_inserts, _ = calculate_msa_mi_and_top_cols(barcodes, inserts, verbose,
                                                                                      mi_exclusion_distance)
+
     msa_subset = msa_int[:, top_cols] if (subset_msa and len(top_cols) > 0) else msa_int
-    dist_matrix_subset, labels = cluster_msa_subset(msa_subset, expected_error_rate, error_rate_multiplier, jump_thresh)
+
+    dist_matrix_subset, labels = cluster_msa_subset(msa_subset, error_rates, error_rate_multiplier, jump_thresh)
+
     return msa_int, mi_matrix, msa_subset, dist_matrix_subset, labels, len_msa_inserts
 
 
-def recursive_outlier_removal(all_df, cluster_df, filtered_dist_matrix, expected_error_rate, percentile_th,
-                              verbose, error_rate_multiplier=1.2, n_decoys=50):
-    if len(cluster_df) < 2: return cluster_df
-    m = filtered_dist_matrix.astype(float);
-    m[np.triu_indices_from(m)] = np.nan
-    if np.nanmax(m) <= expected_error_rate * error_rate_multiplier: return cluster_df
+def recursive_outlier_removal(cluster_df, decoy_inserts, filtered_dist_matrix, error_rates, percentile_th,
+                              verbose, error_rate_quantile=95):
 
+    # can't split if only 1 member
+    if len(cluster_df) < 2: return cluster_df
+
+    # if all within expected error rate, then return as single cluster
+    m = filtered_dist_matrix.astype(float)
+    m[np.triu_indices_from(m)] = np.nan
+
+    if np.nanmax(m) <= np.percentile(error_rates, error_rate_quantile):
+        return cluster_df
+
+    # There appears to be an outlier
+
+    # First, identify the core member of this presumed cluster
     agg = AgglomerativeClustering(metric="precomputed", linkage="single", distance_threshold=np.nanmedian(m),
                                   n_clusters=None)
     labels = agg.fit_predict(filtered_dist_matrix)
-
     largest_idx = np.where(labels == np.bincount(labels).argmax())[0]
     largest_sub_dist = filtered_dist_matrix[np.ix_(largest_idx, largest_idx)]
     best_core = cluster_df['Insert'].iloc[largest_idx[np.argmin(np.mean(largest_sub_dist, axis=1))]]
+
+    #
 
     timer.start("Fuzzy_CDIST_Calculations")
     all_ratios = process.cdist([best_core], list(cluster_df['Insert']), scorer=fuzz.ratio, dtype=np.float32)[0]
@@ -773,7 +1054,7 @@ def recursive_outlier_removal(all_df, cluster_df, filtered_dist_matrix, expected
     # Decoy Check
     timer.start("Fuzzy_CDIST_Calculations")
     decoy_ratios = \
-        process.cdist([cluster_df['Insert'].iloc[outlier_pos]], all_df['Insert'].sample(n=n_decoys), scorer=fuzz.ratio,
+        process.cdist([cluster_df['Insert'].iloc[outlier_pos]], decoy_inserts, scorer=fuzz.ratio,
                       dtype=np.float32)[0]
     timer.stop("Fuzzy_CDIST_Calculations")
 
@@ -781,12 +1062,12 @@ def recursive_outlier_removal(all_df, cluster_df, filtered_dist_matrix, expected
         return cluster_df
 
     keep_mask = np.arange(len(filtered_dist_matrix)) != outlier_pos
-    return recursive_outlier_removal(all_df, cluster_df.iloc[keep_mask],
+    return recursive_outlier_removal(cluster_df.iloc[keep_mask], decoy_inserts,
                                      filtered_dist_matrix[np.ix_(keep_mask, keep_mask)],
-                                     expected_error_rate, percentile_th, verbose, error_rate_multiplier, n_decoys)
+                                     error_rates, percentile_th, verbose, error_rate_quantile)
 
 
-def recursive_mi_splitting(cluster_df, all_df, expected_error_rate, timer, verbose, mi_percentile, depth=0, max_depth=3):
+def recursive_mi_splitting(cluster_df, expected_error_rate, timer, verbose, mi_percentile, depth=0, max_depth=3):
     """
     Recursively splits a cluster if MI check indicates it is a mix of sequences.
     Splitting is based on clustering the 'top columns' (highest MI interactions).
@@ -902,73 +1183,10 @@ def recursive_mi_splitting(cluster_df, all_df, expected_error_rate, timer, verbo
         print(f"    > Split successful: {len(df_0)} vs {len(df_1)}")
 
     # 4. Recurse on children
-    results_0 = recursive_mi_splitting(df_0, all_df, expected_error_rate, timer, verbose, mi_percentile, depth + 1, max_depth)
-    results_1 = recursive_mi_splitting(df_1, all_df, expected_error_rate, timer, verbose, mi_percentile, depth + 1, max_depth)
+    results_0 = recursive_mi_splitting(df_0, expected_error_rate, timer, verbose, mi_percentile, depth + 1, max_depth)
+    results_1 = recursive_mi_splitting(df_1, expected_error_rate, timer, verbose, mi_percentile, depth + 1, max_depth)
 
     return results_0 + results_1
-
-
-def full_analysis(sub_df, all_df, barcode_target, percentile_th, expected_error_rate,
-                  verbose, mi_exclusion_distance, mi_percentile, cluster_again_total_mean_thresh=2,
-                  cluster_again_single_mean_thresh=3):
-    if len(sub_df) < 2:
-        if 'cluster' not in sub_df.columns: sub_df = sub_df.copy(); sub_df['cluster'] = -1
-        return sub_df
-
-    # Initial Clustering
-    barcodes = sub_df['Barcode'].tolist()
-    inserts = sub_df['Insert'].tolist()
-
-    _, _, _, dist_matrix_subset, labels, _ = cluster_barcode_insert_pairs(
-        barcodes, inserts, mi_exclusion_distance, expected_error_rate,
-        error_rate_multiplier=3, verbose=0, subset_msa=False
-    )
-
-    # Unique cluster IDs to prevent collision in later steps
-    labels = labels + hash(frozenset(sub_df.index)) % 10_000_000
-    sub_df['cluster'] = labels
-
-    final_clusters = []
-    unique_labels = list(set(labels))
-
-    for label in unique_labels:
-        this_cluster = sub_df[sub_df['cluster'] == label]
-
-        # 1. Outlier Removal (Existing logic)
-        indices = np.where(labels == label)[0]
-        filtered_dist_matrix = dist_matrix_subset[np.ix_(indices, indices)]
-        processed_cluster = recursive_outlier_removal(
-            all_df, this_cluster, filtered_dist_matrix,
-            expected_error_rate, percentile_th, verbose
-        )
-
-        # 2. Recursive MI Check & Splitting (New Logic)
-        if len(processed_cluster) >= 8 and label != -1:
-            # This function returns a LIST of dataframes (1 if clean, >1 if split)
-            split_results = recursive_mi_splitting(
-                processed_cluster, all_df, expected_error_rate, timer, verbose, mi_percentile
-            )
-
-            # Assign new sub-cluster IDs if split occurred
-            for i, res_df in enumerate(split_results):
-                if len(split_results) > 1:
-                    # Append suffix to label to track lineage (e.g., 101_0, 101_1)
-                    res_df = res_df.copy()
-                    res_df['cluster'] = label * 100 + i  # Simple offset for sub-clusters
-                final_clusters.append(res_df)
-
-        else:
-            processed_cluster = processed_cluster.copy()
-            processed_cluster['mi_warning'] = False
-            final_clusters.append(processed_cluster)
-
-    if not final_clusters:
-        return pd.DataFrame(columns=sub_df.columns)
-
-    result = pd.concat(final_clusters)
-    if verbose >= 2:
-        timer.report()
-    return result
 
 
 def filter_result_df(result, barcode_target, verbose,
@@ -1021,5 +1239,262 @@ def filter_result_df(result, barcode_target, verbose,
     result['cluster'] = result['cluster'].map(lambda x: mapping.get(x, -1))
 
     return result
+
+
+def full_analysis(sub_df, decoy_inserts, percentile_th, error_rates,
+                  verbose, mi_exclusion_distance, mi_percentile):
+    if len(sub_df) < 2:
+        if 'cluster' not in sub_df.columns: sub_df = sub_df.copy(); sub_df['cluster'] = -1
+        return sub_df
+
+    # Initial Clustering
+    barcodes = sub_df['Barcode'].tolist()
+    inserts = sub_df['Insert'].tolist()
+
+    # note use of error_rate_multiplier=3 - very lenient (intentional)
+    _, _, _, dist_matrix_subset, labels, _ = cluster_barcode_insert_pairs(
+        barcodes, inserts, mi_exclusion_distance, error_rates,
+        error_rate_multiplier=3, verbose=0, subset_msa=False
+    )
+
+    # Unique cluster IDs to prevent collision in later steps
+    labels = labels + hash(frozenset(sub_df.index)) % 10_000_000
+    sub_df['cluster'] = labels
+
+    final_clusters = []
+    unique_labels = list(set(labels))
+
+    for label in unique_labels:
+        this_cluster = sub_df[sub_df['cluster'] == label]
+
+        # 1. Outlier Removal (Existing logic)
+        indices = np.where(labels == label)[0]
+        filtered_dist_matrix = dist_matrix_subset[np.ix_(indices, indices)]
+
+        processed_cluster = recursive_outlier_removal(
+            this_cluster, decoy_inserts, filtered_dist_matrix,
+            error_rates, percentile_th, verbose
+        )
+
+        # 2. Recursive MI Check & Splitting (New Logic)
+        if len(processed_cluster) >= 8 and label != -1:  # TODO decrease to 4, cos 2 and 2 could work in theory?
+            # This function returns a LIST of dataframes (1 if clean, >1 if split)
+            split_results = recursive_mi_splitting(
+                processed_cluster, error_rates, timer, verbose, mi_percentile
+            )
+
+            # Assign new sub-cluster IDs if split occurred
+            for i, res_df in enumerate(split_results):
+                if len(split_results) > 1:
+                    # Append suffix to label to track lineage (e.g., 101_0, 101_1)
+                    res_df = res_df.copy()
+                    res_df['cluster'] = label * 100 + i  # Simple offset for sub-clusters
+                final_clusters.append(res_df)
+
+        else:
+            processed_cluster = processed_cluster.copy()
+            processed_cluster['mi_warning'] = False
+            final_clusters.append(processed_cluster)
+
+    if not final_clusters:
+        return pd.DataFrame(columns=sub_df.columns)
+
+    result = pd.concat(final_clusters)
+    if verbose >= 2:
+        timer.report()
+    return result
+
+
+import statistics
+
+# ============== main function ==================
+
+BACKBONE_SECTION = "AAGCAAGTAAAACCTCTACAAATGTGGTATTGGCCCATCTCTATCGGTATCGTAGCATAACCCCTTGGGGCCTCTAAACGGGTCTTGAGGGGTTTTTTGTGCCCCTCGGGCCGGATTGCTATCTACCGGCATTGGCGCAGAAAAAAATGCCTGATGCGACGCTGCGCGTCTTATACTCCCACATATGCCAGATTCAGCAACGGATACGGCTTCCCCAACTTGCCCACTTCCATACGTGTCCTCCTTACCAGAAATTTATCCTTAAGGTCGTCAGCTATCCTGCAGGCGATCTCTCGATTTCGATCAAGACATTCCTTTAATGGTCTTTTCTGGACACCACTAGGGGTCAGAAGTAGTTCATCAAACTTTCTTCCCTCCCTAATCTCATTGGTTACCTTGGGCTATCGAAACTTAATTAACCAGTCAAGTCAGCTACTTGGCGAGATCGACTTGTCTGGGTTTCGACTACGCTCAGAATTGCGTCAGTCAAGTTCGATCTGGTCCTTGCTATTGCACCCGTTCTCCGATTACGAGTTTCATTTAAATCATGTGAGCAAAAGGCCAGCAAAAGGCCAGGAACCGTAAAAAGGCCGCGTTGCTGGCGTTTTTCCATAGGCTCCGCCCCCCTGACGAGCATCACAAAAATCGACGCTCAAGTCAGAGGTGGCGAAACCCGACAGGACTATAAAGATACCAGGCGTTTCCCCCTGGAAGCTCCCTCGTGCGCTCTCCTGTTCCGACCCTGCCGCTTACCGGATACCTGTCCGCCTTTCTCCCTTCGGGAAGCGTGGCGCTTTCTCATAGCTCACGCTGTAGGTATCTCAGTTCGGTGTAGGTCGTTCGCTCCAAGCTGGGCTGTGTGCACGAACCCCCCGTTCAGCCCGACCGCTGCGCCTTATCCGGTAACTATCGTCTTGAGTCCAACCCGGTAAGACACGACTTATCGCCACTGGCAGCAGCCACTGGTAACAGGATTAGCAGAGCGAGGTATGTAGGCGGTGCTACAGAGTTCTTGAAGTGGTGGCCTAACTACGGCTACACTAGAAGAACAGTATTTGGTATCTGCGCTCTGCTGAAGCCAGTTACCTTCGGAAAAAGAGTTGGTAGCTCTTGATCCGGCAAACAAACCACCGCTGGTAGCGGTGGTTTTTTTGTTTGCAAGCAGCAGATTACGCGCAGAAAAAAAGGATCTCAAGAAGATCCTTTGATCTTTTCTACGGGGTCTGACGCTCAGTGGAACGAAAACTCACGTTAAGGGATTTTGGTCATGAGATTATCAAAAAGGATCTTCACCTAGATCCTTTTAAATTAAAAATGAAGTTTTAAATCAATCTAAAGTATATATGAGTAAACTTGGTCTGACAGTTACCAATGCTTAATCAGTGAGGCACCTATCTCAGCGATCTGTCTATTTCGTTCATCCATAGTTGCATTTAAATTTCCGAACTCTCCAAGGCCCTCGTCGGAAAATCTTCAAACCTTTCGTCCGATCCATCTTGCAGGCTACCTCTCGAACGAACTATCGCAAGTCTCTTGGCCGGCCTTGCGCCTTGGCTATTGCTTGGCAGCGCCTATCGCCAGGTATTACTCCAATCCCGAATATCCGAGATCGGGATCACCCGAGAGAAGTTCAACCTACATCCTCAATCCCGATCTATCCGAGATCCGAGGAATATCGAAATCGGGGCGCGCCTGGTGTACCGAGAACGATCCTCTCAGTGCGAGTCTCGACGATCCATATCGTTGCTTGGCAGTCAGCCAGTCGGAATCCAGCTTGGGACCCAGGAAGTCCAATCGTCAGATATTGTACTCAAGCCTGGTCACGGCAGCGTACCGATCTGTTTAAACCTAGATATTGATAGTCTGATCGGTCAACGTATAATCGAGTCCTAGCTTTTGCAAACATCTATCAAGAGACAGGATCAGCAGGAGGCTTTCGCATGAGTATTCAACATTTCCGTGTCGCCCTTATTCCCTTTTTTGCGGCATTTTGCCTTCCTGTTTTTGCTCACCCAGAAACGCTGGTGAAAGTAAAAGATGCTGAAGATCAGTTGGGTGCGCGAGTGGGTTACATCGAACTGGATCTCAACAGCGGTAAGATCCTTGAGAGTTTTCGCCCCGAAGAACGCTTTCCAATGATGAGCACTTTTAAAGTTCTGCTATGTGGCGCGGTATTATCCCGTATTGACGCCGGGCAAGAGCAACTCGGTCGCCGCATACACTATTCTCAGAATGACTTGGTTGAGTATTCACCAGTCACAGAAAAGCATCTTACGGATGGCATGACAGTAAGAGAATTATGCAGTGCTGCCATAACCATGAGTGATAACACTGCGGCCAACTTACTTCTGACAACGATTGGAGGACCGAAGGAGCTAACCGCTTTTTTGCACAACATGGGGGATCATGTAACTCGCCTTGATCGTTGGGAACCGGAGCTGAATGAAGCCATACCAAACGACGAGCGTGACACCACGATGCCTGTAGCAATGGCAACAACCTTGCGTAAACTATTAACTGGCGAACTACTTACTCTAGCTTCCCGGCAACAGTTGATAGACTGGATGGAGGCGGATAAAGTTGCAGGACCACTTCTGCGCTCGGCCCTTCCGGCTGGCTGGTTTATTGCTGATAAATCTGGAGCCGGTGAGCGTGGGTCTCGCGGTATCATTGCAGCACTGGGGCCAGATGGTAAGCCCTCCCGTATCGTAGTTATCTACACGACGGGGAGTCAGGCAACTATGGATGAACGAAATAGACAGATCGCTGAGATAGGTGCCTCACTGATTAAGCATTGGTAACCGATTCTAGGTGCATTGGCGCAGAAAAAAATGCCTGATGCGACGCTGCGCGTCTTATACTCCCACATATGCCAGATTCAGCAACGGATACGGCTTCCCCAACTTGCCCACTTCCATACGTGTCCTCCTTACCAGAAATTTATCCTTAAGATCCCGAATCGTTTAAACTCGACTCTGGCTCTATCGAATCTCCGTCGTTTCGAGCTTACGCGAACAGCCGTGGCGCTCATTTGCTCGTCGGGCATCGAATCTCGTCAGCTATCGTCAGCTTACCTTTTTGGCAGCGATCGCGGCTCCCGACATCTTGGACCATTAGCTCCACAGGTATCTTCTTCCCTCTAGTGGTCATAACAGCAGCTTCAGCTACCTCTCAATTCAAAAAACCCCTCAAGACCCGTTTAGAGGCCCCAAGGGGTTATGCTATCAATCGTTGCGTTACACACACAAAAAACCAACACACATCCATCTTCGATGGATAGCGATTTTATTATCTAACTGCTGATCGAGTGTAGCCAGATCTAGTAATCAATTACGGGGTCATTAGTTCATAGC".upper()
+verbose = 6
+percentile_th = 95  # similarity of barcodes
+# expected_error_rate = 0.01
+mi_exclusion_distance = 5  # Mutual information between close bases is ignored (to avoid propagating sequencing errors giving false signal)
+mi_percentile = 99  # If MI for a given cluster is above this percentile from simulations, then split
+barcode_5p = "AATAGGACGAgACGCGC".upper()
+barcode_3p = "cGTAAACTGGATCCGC".upper()
+insert_5p = "CTTGGTGCCAGCTTATCA".upper()
+insert_3p = "cctatgaagtgctctagtcaagtttaact".upper()
+fastq_file = "/Users/ogw/Downloads/ris_plasmids/no_sample_id/20251208_1553_MN41644_AYO707_6ec906fc/fastq_pass/combined.fastq.gz"
+fastq_file = '/Users/ogw/Library/CloudStorage/GoogleDrive-oscargwilkins@gmail.com/My Drive/UCL PhD/2025/plasmid_sequencing_results/21641/2025-10-30_01-47-43/downstream_risdiplam_array_pool/downstream_risdiplam_array_pool_raw.fastq.gz'
+n_decoys = 50
+
+if __name__ == "__main__":
+    # === First, calculate expected error rate ===
+    stats = estimate_error_rates(fastq_file, BACKBONE_SECTION)
+    error_rates = analyze_errors(stats)
+
+    # === Next, identify barcode insert pairs ===
+
+    inserts, bc_index = process_fastq(fastq_file, barcode_5p, barcode_3p, insert_5p, insert_3p)
+    # note that inserts is a list of tuples, (compressed_form, length)
+
+    # TODO, optional minimap-based alignment and removal of invariant bases within inserts
+
+    print(f"\rTotal number of good barcode/insert pairs: {len(inserts)}")
+
+    # --- DEMO: HOW TO USE THE NEW STRUCTURE ---
+    # print("\n--- DATA ACCESS DEMO ---")
+
+    # 1. Find the most common barcode
+    # Sort barcodes by how many reads they have (length of the index list)
+
+    #
+    # if sorted_bcs:
+    #     top_bc, indices = sorted_bcs[0]
+    #     print(f"Top Barcode: {top_bc} (Count: {len(indices)})")
+    #
+    #     # 2. Get the first 3 inserts associated with this top barcode
+    #     print(f"First 3 inserts for {top_bc}:")
+    #     for idx in indices[:3]:
+    #         comp_ins, ins_len = inserts[idx]
+    #         raw_ins = decompress_dna(comp_ins, ins_len)
+    #         print(f"  - Index {idx}: {raw_ins[:40]}...")
+    #
+    # print("\n" + "=" * 30)
+    # print("   LENGTH STATISTICS   ")
+    # print("=" * 30)
+
+    # 1. INSERT STATISTICS
+    if inserts:
+        ins_lengths = sorted([length for _, length in inserts])  # Sort once for percentiles
+        n = len(ins_lengths)
+
+
+        # Helper to get percentile (p is 0-100)
+        def get_p(p):
+            return ins_lengths[int((n - 1) * p / 100)]
+
+
+        print(f"\n[INSERTS] (n={n})")
+        print(f"  Mean: {statistics.mean(ins_lengths):.1f} bp")
+
+        # requested quantiles
+        print(f"  Min length: {min(ins_lengths)} bp")
+        print(f"  Q1:   {get_p(1)} bp")
+        print(f"  Q10:  {get_p(10)} bp")
+        print(f"  Q25:  {get_p(25)} bp")
+        print(f"  Q50:  {get_p(50)} bp (Median)")
+        print(f"  Q75:  {get_p(75)} bp")
+        print(f"  Q90:  {get_p(90)} bp")
+        print(f"  Q99:  {get_p(99)} bp")
+        print(f"  Max length: {max(ins_lengths)} bp")
+
+    else:
+        print("\n[INSERTS] No valid inserts found.")
+
+    # 2. BARCODE STATISTICS (Weighted by Read Count)
+    if bc_index:
+        # Reconstruct list of lengths for every single read
+        bc_lengths = []
+        for bc_seq, index_list in bc_index.items():
+            # Add the length of this barcode 'N' times, where N is how many reads had it
+            bc_lengths.extend([len(bc_seq)] * len(index_list))
+
+        print(f"\n[BARCODES] (n={len(bc_lengths)})")
+        print(f"  Mean:   {statistics.mean(bc_lengths):.1f} bp")
+        bc_med = statistics.median(bc_lengths)
+        bc_med_pct = (bc_lengths.count(bc_med) / len(bc_lengths)) * 100
+        print(f"  Median: {bc_med} bp ({bc_med_pct:.1f}% of reads match)")
+        print(f"  Min:    {min(bc_lengths)} bp")
+        print(f"  Max:    {max(bc_lengths)} bp")
+    else:
+        print("\n[BARCODES] No valid barcodes found.")
+
+    print("\n" + "=" * 30)
+
+    # =================================
+    # ========= run clustering ========
+    # =================================
+
+    # Create a list of all barcodes. Not memory-efficient but simple
+    sorted_bcs = sorted(bc_index.items(), key=lambda item: len(item[1]), reverse=True)
+
+    # Create a list of decoy inserts for comparisons
+    decoy_indexes = np.random.choice(len(inserts), size=n_decoys, replace=False)
+    decoy_inserts = [
+            decompress_dna(comp, length)
+            for index in decoy_indexes
+            for comp, length in [inserts[index]]
+        ]
+
+    # Create an inversed index for fast access later
+    inverse_bc_index = {idx: barcode for barcode, indices in bc_index.items() for idx in indices}
+
+    assigned_to_cluster = set()  # indexes of those that have already been assigned to a cluster
+
+    for i, barcode in enumerate(sorted_bcs):
+
+        if barcode not in bc_index.keys():
+            continue  # has been removed in a previous clustering round
+
+        if verbose >= 1:
+            count = len(bc_index[barcode])
+            print(f"\n\n=============\n{barcode}")
+            print(f"Processing Top Barcode #{i + 1}: {barcode} (Count: {count})")
+
+        # top_bc = "TCGATCGCGTGA" # Force specific barcode if needed for debug
+
+        # RapidFuzz analysis of barcodes TODO convert to edlib?
+        all_available_bcs = list(bc_index.keys())
+        scores = process.cdist([barcode], all_available_bcs, scorer=fuzz.ratio, dtype=np.float32)[0]
+        candidate_bcs = all_available_bcs[np.where(scores > 88)[0]]
+
+        candidate_indexes = [item for k in candidate_bcs for item in bc_index[k]]
+
+        if verbose >= 3:
+            print(f"Number of barcode/insert pairs being analysed this round: {len(candidate_indexes)}")
+
+        if len(candidate_indexes) == 0:
+            continue
+
+        # Create a "filtered_df" to be used downstream
+        filtered_barcodes = [inverse_bc_index[index] for index in candidate_indexes]
+        filtered_inserts = [
+            decompress_dna(comp, length)
+            for index in candidate_indexes
+            for comp, length in [inserts[index]]
+        ]
+
+        filtered_df = pd.DataFrame({
+            'Barcode': filtered_barcodes,
+            'Insert': filtered_inserts
+        })
+
+        result_df = full_analysis(filtered_df, decoy_inserts,
+                                  percentile_th=percentile_th, verbose=verbose, error_rates=error_rates,
+                                  mi_exclusion_distance=mi_exclusion_distance, mi_percentile=mi_percentile)
+
+        result_df2 = filter_result_df(result_df, barcode, verbose, filter_target=True)
+
+        # Create the count DataFrame first (using the recommended groupby method)
+        combo_counts_df = result_df2.groupby(
+            ['ID', 'cluster', 'mi_warning', 'barcodes_consistent']).size().reset_index(name='count')
+
+        # Now, sort the DataFrame
+        combo_counts_df.sort_values(by=['cluster', 'count'], ascending=[True, False], inplace=True)
+
+        # Print the final result
+        print(combo_counts_df)
+
+        # print(result_df2)
+
+        # Filter to remove assigned indexes from future analysis
+        bcs_to_check = set()
+        for index in indexes_assigned_this_round:
+            linked_barcode = inverse_bc_index.pop(index)
+            bc_index[linked_barcode].remove(index)
+            bcs_to_check.add(linked_barcode)
+
+        for bc in bcs_to_check:
+            if len(bc_index[bc]) == 0:
+                del bc_index[bc]
+
+
+        #
 
 
