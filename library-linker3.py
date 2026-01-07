@@ -657,9 +657,6 @@ def _score_bitwise_internal(bitmaps, n_chunks, L, n_var, lut, top_pct, bottom_pc
     return max_ratio
 
 
-
-
-
 def remove_invariant_columns(msa_int):
     """
     Identifies and removes columns where values do not change (invariant).
@@ -677,7 +674,6 @@ def remove_invariant_columns(msa_int):
 
     msa_reduced = msa_int[:, kept_indices]
     return msa_reduced, kept_indices
-
 
 
 def encode_msa(msa_strings, alphabet="ACGTN-"):
@@ -719,7 +715,6 @@ def get_marginals(msa_int, vocab_size):
     # Calculate frequencies of each base/N/- at each position in MSA
     P_i = one_hot.mean(axis=0)
     return one_hot, P_i
-
 
 
 def get_elbow_columns(mi_matrix, exclusion_distance=5, verbose=0):
@@ -1488,8 +1483,3 @@ if __name__ == "__main__":
         for bc in bcs_to_check:
             if len(bc_index[bc]) == 0:
                 del bc_index[bc]
-
-
-        #
-
-
