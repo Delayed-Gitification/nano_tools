@@ -59,11 +59,12 @@ def main():
 
 	with pysam.AlignmentFile(args.bam) as bam:
 		for record in bam:
-			record_number += 1
-
+			
 			if record.is_unmapped:
 				skipped += 1
 				continue
+
+			record_number += 1
 
 			if record_number % 10_000 == 0:
 				print(record_number)
